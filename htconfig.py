@@ -6,6 +6,9 @@
   Marzo 2010 Version 1.0RC3.1/2k111028
   Migrado a Python Marzo 2015
 """
+# GitHub's RAW URL:
+# https://raw.githubusercontent.com/edza978/htconfig/master/htconfig.py
+# GitHub Raw test.
 # Manejo de argumentos
 import argparse
 # hostname y fqdn
