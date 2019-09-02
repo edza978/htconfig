@@ -1,14 +1,14 @@
 # This Python file uses the following encoding: utf-8
 """
- Script para Instalacion y configuracion
-  de HTCondor en Linux
-  Edier Alberto Zapata edalzap@gmail.com
+ Script para Instalacion y configuracion de HTCondor en Linux
+  Edier Alberto Zapata Hernandez edalzap@gmail.com
   Marzo 2010 Version 1.0RC3.1/2k111028
-  Migrado a Python Marzo 2015
+  Migrado a Python: Marzo 2015
+  Version 2: Octubre 2018
 """
 # GitHub's RAW URL:
 # https://raw.githubusercontent.com/edza978/htconfig/master/htconfig.py
-# GitHub Raw test.
+
 # Manejo de argumentos
 import argparse
 # hostname y fqdn
@@ -162,13 +162,13 @@ class VerificaTipo(object):
         ret=False
     else:
       ret=False
-    return ret
+    return(ret)
 
+   """
+   Detects the number of CPUs on a system. Cribbed from pp.
+   http://codeliberates.blogspot.com.co/2008/05/detecting-cpuscores-in-python.html
+   """
    def detectCPUs(self):
-     """
-      Detects the number of CPUs on a system. Cribbed from pp.
-      http://codeliberates.blogspot.com.co/2008/05/detecting-cpuscores-in-python.html
-     """
      # Linux, Unix and MacOS:
      if hasattr(os, "sysconf"):
        if "SC_NPROCESSORS_ONLN" in os.sysconf_names:
@@ -190,7 +190,6 @@ class VerificaTipo(object):
     porque implica que el contenido del archivo será sobreescrito
     totalmente.
    """
-
    def findStrFile(self,task,inputFile,searchStr):
     ret=False
     if(task=="c"):
@@ -254,7 +253,8 @@ class Install(object):
        "err_maxmem":"-rs: Too many RAM required / Demasiada memoria (RAM) requerida",
        "err_masterslot":"-rs,-ds: Slots can't be created in Master or submit nodes / No se pueden crear slots en nodos maestro o de envio",
        "err_natip":"-nat: Invalid IP addresses / Direcciones IP no validas",
-       "err_wrongowner":"-ou: Invalid owner\'s username / Nombre de propietario invalido"}
+       "err_wrongowner":"-ou: Invalid owner\'s username / Nombre de propietario invalido",
+       "err_nofile":"File not found / Archivo no encontrado"}
      # Verificar argumentos recibidos
      # self.checkArgs(args)
 
@@ -635,8 +635,8 @@ class Install(object):
         # Always run jobs in this slot / Siempre ejecutar tareas en este slot
         SLOT_TYPE_%s_START = True
         # Minimun Memory when job don't request any / Minimo de Memoria RAM cuando la tarea no solicita
-        JOB_DEFAULT_REQUESTMEMORY=192
-        MODIFY_REQUEST_EXPR_REQUESTMEMORY=quantize(RequestMemory, {192})
+        JOB_DEFAULT_REQUESTMEMORY=256
+        MODIFY_REQUEST_EXPR_REQUESTMEMORY=quantize(RequestMemory, {256})
         # Check Memory used by the job / Verificar memoria usada por la tarea
         MEMORY_EXCEEDED=((MemoryUsage*1.1 > Memory) =?= TRUE)
         # If Memory Exceded, Evict job / Si se excede la memoria, cancelar la tarea
@@ -647,6 +647,7 @@ class Install(object):
         MaxVacateTime = 2 * $(MINUTE)
         # Message to Job\'s owner / Mensaje para el propietario del Job.
         WANT_HOLD_REASON=ifThenElse( $(WANT_HOLD),\"%s\",undefined )""" % (slots,slots,slots,slots,strHold,strReason)]
+
       if(args.rs or args.ds):
         config["cfg_slots"]=["NUM_SLOTS","%s" % slots,"Create required Slots / Crear Slots requeridos"]
         # Registrar cantidad de slots para futuras referencias
@@ -719,6 +720,99 @@ class Install(object):
       # Crear contenido
       self.config2Data(cfg_order,config)
 
+  # Habilitar restriccion de Prioridad de Usuario
+  def cfgUserPrio(self,valida):
+    args=self.args
+    ret=False
+    cfg_order=[]
+    config={}
+    # Se desea restringuir por prioridad.
+    if(args.userprio):
+      if(valida.checkInt(args.userprio)):
+        if(args.userprio<600):
+          args.userprio=600
+        ret=True
+        """
+        # Restricion de prioridad.
+        SLOT_TYPE_1_START = $(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.SubmitterUserPrio),True, TARGET.SubmitterUserPrio < 505.0)
+        """
+        if(valida.findStrFile(args.task,args.config,"SLOT_TYPE_2_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_2_START = True")):
+          # Ejecutar solo tareas del propietario.
+          config["cfg_usrprio"]=["SLOT_TYPE_2_START","$(SLOT_TYPE_2_START) && IfThenElse(isUndefined(TARGET.SubmitterUserPrio),True, TARGET.SubmitterUserPrio < %s.0)" % args.userprio,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+        elif(valida.findStrFile(args.task,args.config,"SLOT_TYPE_1_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_1_START = True")):
+          config["cfg_usrprio"]=["SLOT_TYPE_1_START","$(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.SubmitterUserPrio),True, TARGET.SubmitterUserPrio < %s.0)" % args.userprio,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+        else:
+          config["cfg_usrprio"]=["STARTD_ATTRS","$(STARTD_ATTRS) && IfThenElse(isUndefined(TARGET.SubmitterUserPrio),True, TARGET.SubmitterUserPrio < %s.0)" % args.userprio,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+      else:
+        self.errores.append("err_wrongprio")
+        ret=False
+    if(ret and args.userprio):
+      cfg_order.append("cfg_usrprio")
+      # Crear contenido inicial
+      self.config2Data(cfg_order,config)
+
+  # Habilitar restriccion de Slots para el Usuario
+  def cfgUserSlots(self,valida):
+    args=self.args
+    ret=False
+    cfg_order=[]
+    config={}
+    # Se desea restringuir por prioridad.
+    if(args.userslots):
+      if(valida.checkInt(args.userslots)):
+        if(args.userslots<1):
+          args.userslots=1
+        ret=True
+        """
+        # Restricion de slots. Cada usuario puede usar solo 1 slot.
+        #SLOT_TYPE_1_START = $(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.SubmitterUserResourcesInUse),True, TARGET.SubmitterUserResourcesInUse < 1)
+        """
+        if(valida.findStrFile(args.task,args.config,"SLOT_TYPE_2_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_2_START = True")):
+          # Ejecutar solo tareas del propietario.
+          config["cfg_usrslots"]=["SLOT_TYPE_2_START","$(SLOT_TYPE_2_START) && IfThenElse(isUndefined(TARGET.SubmitterUserResourcesInUse),True, TARGET.SubmitterUserResourcesInUse < %s)" % args.userslots,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+        elif(valida.findStrFile(args.task,args.config,"SLOT_TYPE_1_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_1_START = True")):
+          config["cfg_usrslots"]=["SLOT_TYPE_1_START","$(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.SubmitterUserResourcesInUse),True, TARGET.SubmitterUserResourcesInUse < %s)" % args.userslots,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+        else:
+          config["cfg_usrslots"]=["STARTD_ATTRS","$(STARTD_ATTRS) && IfThenElse(isUndefined(TARGET.SubmitterUserResourcesInUse),True, TARGET.SubmitterUserResourcesInUse < %s)" % args.userslots,"Restriction for users with high use of resources / Restriccion para usuarios con alto uso de recursos"]
+      else:
+        self.errores.append("err_wrongslots")
+        ret=False
+    if(ret and args.userslots):
+      cfg_order.append("cfg_usrslots")
+      # Crear contenido inicial
+      self.config2Data(cfg_order,config)
+
+  # Habilitar restriccion de Reinicios por Tarea
+  def cfgJobStart(self,valida):
+    args=self.args
+    ret=False
+    cfg_order=[]
+    config={}
+    # Se desea restringuir por prioridad.
+    if(args.jobstart):
+      if(valida.checkInt(args.jobstart)):
+        if(args.jobstart<2):
+          args.jobstart=2
+        ret=True
+        """
+        # Restricion de slots. Cada usuario puede usar solo 1 slot.
+        #SLOT_TYPE_1_START = $(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.SubmitterUserResourcesInUse),True, TARGET.SubmitterUserResourcesInUse < 1)
+        """
+        if(valida.findStrFile(args.task,args.config,"SLOT_TYPE_2_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_2_START = True")):
+          # Ejecutar solo tareas del propietario.
+          config["cfg_jobstart"]=["SLOT_TYPE_2_START","$(SLOT_TYPE_2_START) && IfThenElse(isUndefined(TARGET.NumJobStarts),True, TARGET.NumJobStarts < %s)" % args.jobstart,"Restriction for Jobs with multiple failures / Restriccion para Tareas con multiples fallos"]
+        elif(valida.findStrFile(args.task,args.config,"SLOT_TYPE_1_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_1_START = True")):
+          config["cfg_jobstart"]=["SLOT_TYPE_1_START","$(SLOT_TYPE_1_START) && IfThenElse(isUndefined(TARGET.NumJobStarts),True, TARGET.NumJobStarts < %s)" % args.jobstart,"Restriction for Jobs with multiple failures / Restriccion para Tareas con multiples fallos"]
+        else:
+          config["cfg_jobstart"]=["STARTD_ATTRS","$(STARTD_ATTRS) && IfThenElse(isUndefined(TARGET.NumJobStarts),True, TARGET.NumJobStarts < %s)" % args.jobstart,"Restriction for Jobs with multiple failures / Restriccion para Tareas con multiples fallos"]
+      else:
+        self.errores.append("err_wrongstarts")
+        ret=False
+    if(ret and args.jobstart):
+      cfg_order.append("cfg_jobstart")
+      # Crear contenido inicial
+      self.config2Data(cfg_order,config)
+
   # Habilitar ejecucion de tareas de usuarios no existentes
   def cfgNoUser(self,valida):
     args=self.args
@@ -745,12 +839,12 @@ class Install(object):
     config={}
     # Se indico un propietario.
     if(args.owneruser):
-      if(valida.checkUser(args.owneruser)):
+      if(valida.checkUser(args.owneruser[0])):
         ret=True
-        config["cfg_owner1"]=["MachineOwner","\"%s\"" % args.owneruser,"CustomClassAd for Owner priority / ClassAd personal para prioridad del propietario"]
+        config["cfg_owner1"]=["MachineOwner","\"%s\"" % args.owneruser[0],"CustomClassAd for Owner priority / ClassAd personal para prioridad del propietario"]
         config["cfg_owner2"]=["STARTD_ATTRS","$(STARTD_ATTRS) MachineOwner"]
-        if(not args.privnode):
-          config["cfg_owner3"]=["RANK","User =?= MY.MachineOwner"]
+        if(args.owneruser[1]=="S"):
+          config["cfg_owner3"]=["RANK","User =?= MY.MachineOwner","Uncommented priorize owner jobs but accept jobs from any user / Descomentado priorizar tareas del propietario, pero aceptar de todos los usuarios."]
         else:
           if(valida.findStrFile(args.task,args.config,"SLOT_TYPE_2_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_2_START = True")):
             # Ejecutar solo tareas del propietario.
@@ -762,17 +856,7 @@ class Install(object):
       else:
         self.errores.append("err_wrongowner")
         ret=False
-    elif(args.privnode):
-      ret=True
-      if(valida.findStrFile(args.task,args.config,"SLOT_TYPE_2_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_2_START = True")):
-            # Ejecutar solo tareas del propietario.
-        config["cfg_owner3"]=["SLOT_TYPE_2_START","$(SLOT_TYPE_2_START) && TARGET.User == MY.MachineOwner","Only jobs from Owner are acepted / Solo las tareas del propietario son aceptadas."]
-      elif(valida.findStrFile(args.task,args.config,"SLOT_TYPE_1_START = True") or valida.findStrConfig(self.configData,"SLOT_TYPE_1_START = True")):
-        config["cfg_owner3"]=["SLOT_TYPE_1_START","$(SLOT_TYPE_2_START) && TARGET.User == MY.MachineOwner","Only jobs from Owner are acepted / Solo las tareas del propietario son aceptadas."]
-      else:
-        config["cfg_owner3"]=["START","$(START) && TARGET.User == MY.MachineOwner","Only jobs from Owner are acepted / Solo las tareas del propietario son aceptadas."]
-
-    if(ret and (args.owneruser or args.privnode)):
+    if(ret and args.owneruser):
       for idx in range(1,4):
         cfg_order.append("cfg_owner%s" % idx)
       # Crear contenido inicial
@@ -895,7 +979,7 @@ class Install(object):
       # Crear contenido inicial
       self.config2Data(cfg_order,config)
 
-# Definir nodo como Remoto
+  # Definir nodo como Remoto
   def cfgRemoteNode(self,valida):
     args=self.args
     ret=False
@@ -907,7 +991,7 @@ class Install(object):
       config["cfg_remote"]=["""
        # This node is outside Pool's LAN
        IsRemote = True
-       STARTD_ATTRS = $(STARTD_ATTRS) && (Target.MayUseAWS || Target.MayUseGCP || Target.MayUseIBM)
+       STARTD_ATTRS = $(STARTD_ATTRS) && (Target.MayUseAWS || Target.MayUseGCP || Target.MayUseIBM) IsRemote
       """]
     """
     startExpression = "START = MayUseAWS == TRUE\n";
@@ -917,6 +1001,74 @@ class Install(object):
     if(ret):
       cfg_order.append("cfg_remote")
       # Crear contenido inicial
+      self.config2Data(cfg_order,config)
+
+  # Crear cronJobs.
+  def cfgCronJob(self,valida):
+    args=self.args
+    ret=False
+    cfg_order=[]
+    config={}
+    # Se indico que hay NAT
+    if(args.cronjob):
+      # Validar que el script indicado existe.
+      if valida.checkPathFile(args.cronjob[1]):
+        ret=True
+        config["cfg_cronjob"]=["""
+        # User's Cronjob
+        STARTD_CRON_JOBLIST = $(STARTD_CRON_JOBLIST) %s
+        STARTD_CRON_%s_PREFIX = MY_
+        STARTD_CRON_%s_EXECUTABLE = %s
+        STARTD_CRON_%s_PERIOD = %s
+        STARTD_CRON_%s_MODE = periodic
+        STARTD_CRON_%s_RECONFIG = false
+        STARTD_CRON_%s_KILL = true
+        STARTD_CRON_%s_ARGS = %s""" % (args.cronjob[0],args.cronjob[0],args.cronjob[0],\
+       args.cronjob[1],args.cronjob[0],args.cronjob[2],\
+       args.cronjob[0],args.cronjob[0],args.cronjob[0],\
+       args.cronjob[0],args.cronjob[3])]
+      else:
+        self.errores.append("err_nofile")
+        ret=False
+
+    if(ret and args.cronjob):
+      cfg_order.append("cfg_cronjob")
+      # Crear contenido
+      self.config2Data(cfg_order,config)
+
+  # Habilitar apagado del nodo si no hay tareas
+  def cfgAutoShutdown(self,valida):
+    args=self.args
+    ret=False
+    cfg_order=[]
+    config={}
+    # Se indico que hay NAT
+    if(args.shutdown):
+      # Verificar que el script de apago existe.
+      if valida.checkPathFile("/etc/condor/shutdown.sh"):
+        ret=True
+        config["cfg_shutdown"]=["""
+        # Tell HTCondor daemons to gracefully exit if the condor_startd observes
+        # that it has had no active claims for more than 5 minutes and 30 seconds.
+        STARTD_NOCLAIM_SHUTDOWN = 330
+
+        # Next, tell the condor_master to run a script as root upon exit.
+        # In our case, this script will shut down the node.
+        DEFAULT_MASTER_SHUTDOWN_SCRIPT = /etc/condor/shutdown.sh
+
+        # This final config knob is for the paranoid, and covers
+        # the case that perhaps the condor_startd crashes.  It tells the
+        # condor_master to exit if it notices for any reason that the
+        # condor_startd is not running within 1 minute of startup.
+        MASTER.DAEMON_SHUTDOWN_FAST = ( STARTD_StartTime == 0 ) && ((time() - DaemonStartTime) > 60)"""]
+      else:
+        self.errores.append("err_nofile")
+        ret=False
+    if(ret and args.shutdown):
+      cfg_order.append("cfg_shutdown")
+      """for idx in range(1,4):
+        cfg_order.append("cfg_nat%s" % idx)"""
+      # Crear contenido
       self.config2Data(cfg_order,config)
 
   # Crear configuracion y almacenarla en el archivo respectivo.
@@ -938,8 +1090,11 @@ class Install(object):
     self.cfgSharePort(valida)
     self.cfgTcp(valida)
     self.cfgSlots(valida)
-    self.cfgJobSize(valida)
     self.cfgOwner(valida)
+    self.cfgJobSize(valida)
+    self.cfgUserPrio(valida)
+    self.cfgUserSlots(valida)
+    self.cfgJobStart(valida)
     self.cfgNoUser(valida)
     self.cfgPassMS(valida)
     self.cfgPassEX(valida)
@@ -947,6 +1102,8 @@ class Install(object):
     self.cfgMpiNode(valida)
     self.cfgDocker(valida)
     self.cfgRemoteNode(valida)
+    self.cfgCronJob(valida)
+    self.cfgAutoShutdown(valida)
 
     if(not self.checkErrors()):
      return False
@@ -1032,11 +1189,14 @@ grp3.add_argument('-tcp', '--use-tcp', action="store_true", dest="usetcp", defau
 
 grp4=parser.add_argument_group('User and resources\'s parameters/Parametros de Usuario y recursos')
 grp4.add_argument('-nu', '--nobody-user', action="store_true", dest="nu", default=False, help="Enable tasks from users not created in the node/Permitir tareas de usuarios no existentes en el nodo.")
-grp4.add_argument('-ou', '--owner-user', action="store", dest="owneruser", help="Full username of the node\'s owner. Ex -ou johndoe@cloud.test.org/Nombre de usuario completo del propietario del nodo. Ej. -ou johndoe@cloud.test.org")
+grp4.add_argument('-ou', '--owner-user', action="store", dest="owneruser", nargs=2, help="Full username of the node\'s owner and type of use ([P] private or [S] shared). Ex -ou johndoe@cloud.test.org S / Nombre de usuario completo del propietario del nodo y tipo de uso ([P] privado o [S] compartido). Ej. -ou johndoe@cloud.test.org S")
 grp4.add_argument('-rs', '--reserved-slot', action="store", dest="rs", type=int, nargs=2, help="CPU and RAM for the user's reserved slot. Ex -rs 1 10 for 1 core and 10%% RAM/Cores y RAM para el slot dedicado al usuario. Ej. -rs 1 10 para 1 core y 10%% de RAM")
 grp4.add_argument('-ds', '--dynamic-slot', action="store_true", dest="ds", default=False, help="Create an uniq and dynamic slot with all resources/Crear un slot unico y dinamico con todos los recursos.")
-grp4.add_argument('-pn', '--private-node', action="store_true", default=False, dest="privnode", help="Define this node as private, it means, only 'owner user' job's are accepted./Define este nodo como privado, es decir, solo las tareas del \'propietario\' son ejecutadas.")
+#grp4.add_argument('-pn', '--private-node', action="store_true", default=False, dest="privnode", help="Define this node as private, it means, only 'owner user' job's are accepted./Define este nodo como privado, es decir, solo las tareas del \'propietario\' son ejecutadas.")
 grp4.add_argument('-ajs', '--accepted-jobsize', action="store", dest="ajs", type=int, help="Maximum Job running size allowed, the maximum accepted JobSize is half this value. Ex -ajs 100 accept jobs until 50MB and hold jobs than exceeds 100MB in disk/Máximo tamaño en disco permitido. Ej. -ajs 100 acepta tareas de hasta 50MB y detiene tareas que ocupen mas de 100MB en disco.")
+grp4.add_argument('-aup', '--accepted-user-priority', action="store", dest="userprio", type=int, help="Maximun User priority allowed to run jobs in the node (must be greater than 600). Ex -aup 1000 / Prioridad de usuario máxima permitida para ejecutar tareas en el nodo (debe ser mayor a 600). Ej. -aup 1000.")
+grp4.add_argument('-mus', '--maximun-user-slots', action="store", dest="userslots", type=int, help="Maximun Slots allowed to use for a user (must be greater than 0). Ex -mus 100 / Maximo de Slots permitidos para un usuario (debe ser mayor a 0). Ej. -mus 1.")
+grp4.add_argument('-mjs', '--maximun-job-starts', action="store", dest="jobstart", type=int, help="Maximun limit of job restarts accepted (must be greater than 1). Ex -mjs 2 / Limite maximo de reinicios de tareas acceptado (debe ser mayor a 1). Ej. -mjs 2")
 
 grp5=parser.add_argument_group('Security parameters/Parametros de Seguridad')
 grp5.add_argument('-passms', '--password-ms', action="store_true", default=False, dest="passms", help="Enable password for MasterSubmit node, save password in /etc/condor/poolpass./Habilitar clave para nodo MasterEnvio, guardar clave en /etc/condor/poolpass.")
@@ -1047,6 +1207,9 @@ grp6.add_argument('-mpis', '--mpi-sched', action="store_true", default=False, de
 grp6.add_argument('-mpin', '--mpi-node', action="store_true", default=False, dest="mpin", help="Allow MPI jobs to be run/Permitir ejecucion de tareas MPI.")
 grp6.add_argument('-docker', '--docker', action="store_true", default=False, dest="docker", help="Allow Docker universe tasks/Permitir tareas universo Docker.")
 grp6.add_argument('-rn', '--remote-node', action="store_true", default=False, dest="rn", help="Define this node as Remote (not in the same LAN)/Define este nodo como Remoto (No en la misma LAN).")
+grp6.add_argument('-cj', '--cron-job', action="store", dest="cronjob", nargs=4, help="Name, Script's pathname, periodicity and arguments for STARTD_CRON. Ex -cj mycron /etc/condor/cron.bash 15m \"myarg1=1 myarg2=2\" / Nombre, pathname del script, periodicidad y argumentos para STARD_CRON. Ej. -cj mycron /etc/condor/cron.bash 15m \"myarg1=1 myarg2=2\"")
+grp6.add_argument('-as', '--auto-shutdown', action="store_true", default=False, dest="shutdown", help="Enable automatic shutdown if node iddle for more than 15 minutes. / Habilitar apagado automatico si el nodo esta libre por mas de 15 minutos.")
+
 result=parser.parse_args()
 # print(result)
 
